@@ -33,8 +33,7 @@ public class ShadowVSM : MonoBehaviour
 
     public float firstCascadeLevelSize = 8.0f;
     public float depthOfShadowRange = 1000.0f;
-    public FilterMode _filterMode = FilterMode.Bilinear;
-    public bool useDitheringForTransparent = false;
+    const FilterMode _filterMode = FilterMode.Bilinear;
     public enum HighPrecisionMode { Full, Half, HalfOnAndroidOnly }
     public HighPrecisionMode highPrecisionMode = HighPrecisionMode.HalfOnAndroidOnly;
 
@@ -143,6 +142,7 @@ public class ShadowVSM : MonoBehaviour
     {
         internal int numCascades, resolution;
         internal float firstCascadeLevelSize, depthOfShadowRange;
+        internal float internal_scale;
     }
 
     void InitComputeData(out ComputeData cdata)
@@ -154,6 +154,7 @@ public class ShadowVSM : MonoBehaviour
         cdata.resolution = _resolution;
         cdata.firstCascadeLevelSize = firstCascadeLevelSize;
         cdata.depthOfShadowRange = depthOfShadowRange;
+        cdata.internal_scale = internal_scale;
     }
 
     public IEnumerator UpdateShadowsIncrementalCascade()
@@ -196,18 +197,15 @@ public class ShadowVSM : MonoBehaviour
         SetUpShadowCam();
         _shadowCam.targetTexture = _target;
 
-        if (useDitheringForTransparent) Shader.EnableKeyword("VSM_DRAW_TRANSPARENT_SHADOWS");
-        else Shader.DisableKeyword("VSM_DRAW_TRANSPARENT_SHADOWS");
-
         _blur_material.SetVector("BlurPixelSize", new Vector2(1f / _resolution, 1f / _resolution));
         return true;
     }
 
     void ComputeCascade(int lvl, ComputeData cdata)
     {
-        _shadowCam.orthographicSize = cdata.firstCascadeLevelSize * internal_scale * Mathf.Pow(2, lvl);
-        _shadowCam.nearClipPlane = -cdata.depthOfShadowRange * internal_scale;
-        _shadowCam.farClipPlane = cdata.depthOfShadowRange * internal_scale;
+        _shadowCam.orthographicSize = cdata.firstCascadeLevelSize * cdata.internal_scale * Mathf.Pow(2, lvl);
+        _shadowCam.nearClipPlane = -cdata.depthOfShadowRange * cdata.internal_scale;
+        _shadowCam.farClipPlane = cdata.depthOfShadowRange * cdata.internal_scale;
         try
         {
             _shadowCam.RenderWithShader(_depthShader, depthReplacementShaderTag);
@@ -417,9 +415,9 @@ public class ShadowVSM : MonoBehaviour
     void UpdateShadowCamTransformShaderValues(ComputeData cdata)
     {
         Vector3 size;
-        size.y = cdata.firstCascadeLevelSize * internal_scale * 2;
+        size.y = cdata.firstCascadeLevelSize * cdata.internal_scale * 2;
         size.x = _shadowCam.aspect * size.y;
-        size.z = cdata.depthOfShadowRange * internal_scale * 2;
+        size.z = cdata.depthOfShadowRange * cdata.internal_scale * 2;
 
         size.x = 1f / size.x;
         size.y = 1f / size.y;

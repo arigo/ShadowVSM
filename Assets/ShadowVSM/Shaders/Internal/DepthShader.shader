@@ -13,11 +13,7 @@
             #include "UnityCG.cginc"
             #pragma vertex vert
             #pragma fragment frag
-            #pragma multi_compile _ VSM_DRAW_TRANSPARENT_SHADOWS
 
-#ifdef VSM_DRAW_TRANSPARENT_SHADOWS
-            #include "Dither Functions.cginc"
-#endif
             #include "ShadowVSMCustomDepth.cginc"
 
             float4 _Color;
@@ -42,11 +38,7 @@
             float4 frag(v2f i) : SV_Target
             {
                 float4 col = _Color;
-                #if defined(VSM_DRAW_TRANSPARENT_SHADOWS)
-                ditherClip(i.vertex, col.a);
-                #else
-                if (col.a < 0.5) discard;
-                #endif
+                clip(col.a - 0.799);   /* clip if more than 20% transparent */
 
                 return vsm_depth_frag(i.vertex);
             }
