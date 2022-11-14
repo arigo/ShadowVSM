@@ -1,0 +1,17 @@
+/Assets/ShaderDebugger
+/Assets/ShaderDebugger.meta
+/Assets/Local
+/Assets/Local.meta
+.*.sw?
+*~
+/.vs/
+/.vsconfig
+/*.csproj
+/*.sln
+/Library/
+/Logs/
+/obj/
+/Packages/
+/ProjectSettings/
+/Temp/
+/UserSettings/
