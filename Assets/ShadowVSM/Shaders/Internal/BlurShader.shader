@@ -28,12 +28,6 @@
                 float4 vertex : SV_POSITION;
             };
 
-            struct f2a
-            {
-                float4 color0 : COLOR0;
-                float4 color1 : COLOR1;
-            };
-
             sampler _MainTex;
             float4 _Color;
             float2 BlurPixelSize;
@@ -57,12 +51,7 @@
     #define COEFF(x)  x
 #endif
 
-#if BLUR_LINEAR_AND_SQUARE_PART
-            f2a
-#else
-            float4
-#endif
-                frag (v2f i) : SV_Target
+            float4 frag (v2f i) : SV_Target
             {
                 float Coefficients[11] = { 0.14107424,
                     0.132526984, 0.109868729, 0.080381679, 0.051898313, 0.029570767,
@@ -89,10 +78,7 @@
                 }
                 if (col.z == 0) col = float3(64, 64, 1);
                 float2 result = col.xy / col.z;
-                f2a OUT;
-                OUT.color0 = float4(result.x, 0, 0, 0);
-                OUT.color1 = float4(result.y, 0, 0, 0);
-                return OUT;
+                return float4(result, 0, 0);
 #else
                 return _Color;
 #endif

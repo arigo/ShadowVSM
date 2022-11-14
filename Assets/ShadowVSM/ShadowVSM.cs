@@ -35,6 +35,8 @@ public class ShadowVSM : MonoBehaviour
     public float depthOfShadowRange = 1000.0f;
     public FilterMode _filterMode = FilterMode.Bilinear;
     public bool useDitheringForTransparent = false;
+    public enum HighPrecisionMode { Full, Half, HalfOnAndroidOnly }
+    public HighPrecisionMode highPrecisionMode = HighPrecisionMode.HalfOnAndroidOnly;
 
     [Header("Limit shadow casters")]
     public LayerMask cullingMask = -1;
@@ -54,20 +56,21 @@ public class ShadowVSM : MonoBehaviour
 
     /* RenderTextures:
      *   "_target" is the ShadowCam target.  Still needs to be filtered.  Size is 'res x res'.
+     *   (where res = "_resolution").
      *
-     * The other four RenderTextures are size 'res x (res*numCascades)'.  They only contain
-     * one 16-bit float component each but come in pairs, with the '1' storing the depth and
-     * the '2' storing the square of the depth.  The Oculus Quest does not support textures
-     * with two 16-bit float components.
+     * The other two RenderTextures are size 'res x (res*numCascades)'.  They each store two
+     * at-least-16-bit float components: the depth and the square of the depth.  On some
+     * platforms, the exact rendertexture format is not available; we fall back to either two
+     * 32-bit floats, or if that fails too, we try full RGBA textures.
      *
-     * The "backTarget" pair are read by the shaders to display the shadows.  If we are only
-     * using non-incremental mode, then the "renderBackTarget" pair is an identical pair of
-     * objects.  If we're using incremental mode, then "renderBackTarget" is a different pair.
-     * It is the pair in which we are currently rendering the new shadows, swapped when we're
+     * The "backTarget" is read by the shaders to display the shadows.  If we are only
+     * using non-incremental mode, then the "renderBackTarget" is the same texture object.
+     * If we're using incremental mode, then "renderBackTarget" is a different texture.
+     * It is the one in which we are currently rendering the new shadows, swapped when we're
      * done.
      */
-    RenderTexture _backTarget1, _backTarget2, _target;
-    RenderTexture _renderBackTarget1, _renderBackTarget2;
+    RenderTexture _backTarget, _target;
+    RenderTexture _renderBackTarget;
     Camera _shadowCam;
 
 
@@ -220,7 +223,7 @@ public class ShadowVSM : MonoBehaviour
              * but ignore on Sentry then :-( */
         }
 
-        var rt = RenderTexture.GetTemporary(_resolution, _resolution, 0, RenderTextureFormat.ARGBHalf);
+        var rt = RenderTexture.GetTemporary(_resolution, _resolution, 0, _target_format_mode);
         rt.wrapMode = TextureWrapMode.Clamp;
 
         _blur_material.EnableKeyword("BLUR_Y");
@@ -231,7 +234,7 @@ public class ShadowVSM : MonoBehaviour
         float y2 = (lvl + 1) / (float)cdata.numCascades;
 
         _blur_material.EnableKeyword("BLUR_LINEAR_AND_SQUARE_PART");
-        CustomBlit2(rt, _renderBackTarget1, _renderBackTarget2, _blur_material, y1, y2);
+        CustomBlit(rt, _renderBackTarget, _blur_material, y1, y2);
         _blur_material.DisableKeyword("BLUR_LINEAR_AND_SQUARE_PART");
 
         RenderTexture.ReleaseTemporary(rt);
@@ -239,28 +242,15 @@ public class ShadowVSM : MonoBehaviour
 
     void FinalizeUpdateSteps(ComputeData cdata)
     {
-        CustomBlit(null, _renderBackTarget1, _blur_material, 1f - 1f / _renderBackTarget1.height, 1f);
-        CustomBlit(null, _renderBackTarget2, _blur_material, 1f - 1f / _renderBackTarget2.height, 1f);
-
-        Swap(ref _backTarget1, ref _renderBackTarget1);   /* might be identical, if !incremental */
-        Swap(ref _backTarget2, ref _renderBackTarget2);
-
+        CustomBlit(null, _renderBackTarget, _blur_material, 1f - 1f / _renderBackTarget.height, 1f);
+        Swap(ref _backTarget, ref _renderBackTarget);   /* might be identical, if !incremental */
         UpdateShaderValues(cdata);
     }
 
     static void CustomBlit(Texture source, RenderTexture target, Material mat, float y1, float y2)
     {
-        CustomBlit2(source, target, null, mat, y1, y2);
-    }
-
-    static void CustomBlit2(Texture source, RenderTexture target1, RenderTexture target2, Material mat, float y1, float y2)
-    {
         var original = RenderTexture.active;
-        if (target2 == null)
-            RenderTexture.active = target1;
-        else
-            Graphics.SetRenderTarget(new RenderBuffer[] { target1.colorBuffer, target2.colorBuffer },
-                                     target1.depthBuffer);
+        RenderTexture.active = target;
 
         // Set the '_MainTex' variable to the texture given by 'source'
         mat.SetTexture("_MainTex", source);
@@ -286,25 +276,15 @@ public class ShadowVSM : MonoBehaviour
             DestroyImmediate((Texture)_target);
             _target = null;
         }
-        if (_backTarget1)
+        if (_backTarget)
         {
-            DestroyImmediate((Texture)_backTarget1);
-            _backTarget1 = null;
+            DestroyImmediate((Texture)_backTarget);
+            _backTarget = null;
         }
-        if (_backTarget2)
+        if (_renderBackTarget)
         {
-            DestroyImmediate((Texture)_backTarget2);
-            _backTarget2 = null;
-        }
-        if (_renderBackTarget1)
-        {
-            DestroyImmediate((Texture)_renderBackTarget1);
-            _renderBackTarget1 = null;
-        }
-        if (_renderBackTarget2)
-        {
-            DestroyImmediate((Texture)_renderBackTarget2);
-            _renderBackTarget2 = null;
+            DestroyImmediate((Texture)_renderBackTarget);
+            _renderBackTarget = null;
         }
     }
 
@@ -464,12 +444,9 @@ public class ShadowVSM : MonoBehaviour
     void UpdateShaderValues(ComputeData cdata)
     {
         // Set the qualities of the textures
-        SetShaderProperty("VSM_ShadowTex1",
-            id => Shader.SetGlobalTexture(id, _backTarget1),
-            (mat1, id) => mat1.SetTexture(id, _backTarget1));
-        SetShaderProperty("VSM_ShadowTex2",
-            id => Shader.SetGlobalTexture(id, _backTarget2),
-            (mat1, id) => mat1.SetTexture(id, _backTarget2));
+        SetShaderProperty("VSM_ShadowTex",
+            id => Shader.SetGlobalTexture(id, _backTarget),
+            (mat1, id) => mat1.SetTexture(id, _backTarget));
         SetShaderProperty("VSM_InvNumCascades",
             id => Shader.SetGlobalFloat(id, 1f / cdata.numCascades),
             (mat1, id) => mat1.SetFloat(id, 1f / cdata.numCascades));
@@ -480,8 +457,8 @@ public class ShadowVSM : MonoBehaviour
 #if UNITY_EDITOR
     class RenderTextureDebugging : MonoBehaviour
     {
-        public RenderTexture target, backTarget1, backTarget2;
-        public RenderTexture incrementalRendering1, incrementalRendering2;
+        public RenderTexture target, backTarget;
+        public RenderTexture incrementalRendering;
     }
     void ShowRenderTexturesForDebugging()
     {
@@ -489,10 +466,8 @@ public class ShadowVSM : MonoBehaviour
         if (rtd == null)
             rtd = _shadowCam.gameObject.AddComponent<RenderTextureDebugging>();
         rtd.target = _target;
-        rtd.backTarget1 = _backTarget1;
-        rtd.backTarget2 = _backTarget2;
-        rtd.incrementalRendering1 = _backTarget1 == _renderBackTarget1 ? null : _renderBackTarget1;
-        rtd.incrementalRendering2 = _backTarget2 == _renderBackTarget2 ? null : _renderBackTarget2;
+        rtd.backTarget = _backTarget;
+        rtd.incrementalRendering = _backTarget == _renderBackTarget ? null : _renderBackTarget;
     }
 #endif
 
@@ -501,8 +476,8 @@ public class ShadowVSM : MonoBehaviour
     {
         if (_target != null && _target.width != _resolution)
             DestroyTargets();
-        if (_backTarget1 != null && (_backTarget1.filterMode != _filterMode ||
-                                     _backTarget1.height != _resolution * numCascades))
+        if (_backTarget != null && (_backTarget.filterMode != _filterMode ||
+                                    _backTarget.height != _resolution * numCascades))
             DestroyTargets();
 
         if (_target == null)
@@ -511,22 +486,19 @@ public class ShadowVSM : MonoBehaviour
                 return false;
             _target = CreateTarget();
         }
-        if (_backTarget1 == null)
+        if (_backTarget == null)
         {
-            _backTarget1 = CreateBackTarget();
-            _backTarget2 = CreateBackTarget();
+            _backTarget = CreateBackTarget();
         }
-        if (_renderBackTarget1 == null || (incremental && _renderBackTarget1 == _backTarget1))
+        if (_renderBackTarget == null || (incremental && _renderBackTarget == _backTarget))
         {
             if (incremental)
             {
-                _renderBackTarget1 = CreateBackTarget();
-                _renderBackTarget2 = CreateBackTarget();
+                _renderBackTarget = CreateBackTarget();
             }
             else
             {
-                _renderBackTarget1 = _backTarget1;
-                _renderBackTarget2 = _backTarget2;
+                _renderBackTarget = _backTarget;
             }
         }
         return true;
@@ -539,11 +511,42 @@ public class ShadowVSM : MonoBehaviour
         cam.transform.localScale = trackTransform.lossyScale;
     }
 
+#if UNITY_ANDROID
+    bool FullPrecision => highPrecisionMode == HighPrecisionMode.Full;
+#else
+    bool FullPrecision => highPrecisionMode != HighPrecisionMode.Half;
+#endif
+    RenderTextureFormat _target_format_mode;
+
+    RenderTextureFormat GetTargetMode()
+    {
+        if (!FullPrecision && SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf))
+            return RenderTextureFormat.ARGBHalf;
+        if (SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBFloat))
+            return RenderTextureFormat.ARGBFloat;
+        throw new System.Exception("ARGBFloat mode is not supported!");
+    }
+
+    RenderTextureFormat GetBackTargetMode()
+    {
+        if (!FullPrecision && SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RGHalf))
+            return RenderTextureFormat.RGHalf;
+        if (SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.RGFloat))
+            return RenderTextureFormat.RGFloat;
+        if (!FullPrecision && SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf))
+            return RenderTextureFormat.ARGBHalf;
+        if (SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBFloat))
+            return RenderTextureFormat.ARGBFloat;
+        throw new System.Exception("RGFloat and ARGBFloat modes are both not supported!");
+    }
+
     // Creates a rendertarget
     RenderTexture CreateTarget()
     {
-        RenderTexture tg = new RenderTexture(_resolution, _resolution, 24,
-                                             RenderTextureFormat.ARGBHalf);
+        _target_format_mode = GetTargetMode();
+        var desc = new RenderTextureDescriptor(_resolution, _resolution, _target_format_mode, 24);
+        //desc.enableRandomWrite = true;
+        RenderTexture tg = new RenderTexture(desc);
         tg.wrapMode = TextureWrapMode.Clamp;
         tg.antiAliasing = 4;
         tg.Create();
@@ -552,7 +555,7 @@ public class ShadowVSM : MonoBehaviour
 
     RenderTexture CreateBackTarget()
     {
-        var tg = new RenderTexture(_resolution, _resolution * numCascades, 0, RenderTextureFormat.RHalf);
+        var tg = new RenderTexture(_resolution, _resolution * numCascades, 0, GetBackTargetMode());
         tg.filterMode = _filterMode;
         tg.wrapMode = TextureWrapMode.Clamp;
         tg.Create();
@@ -560,7 +563,7 @@ public class ShadowVSM : MonoBehaviour
     }
 
     // Swap Elements A and B
-    void Swap<T>(ref T a, ref T b)
+    static void Swap<T>(ref T a, ref T b)
     {
         T temp = a;
         a = b;

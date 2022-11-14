@@ -1,6 +1,6 @@
 
 // Shadow Map info
-sampler VSM_ShadowTex1, VSM_ShadowTex2;   // two textures because some targets don't support RGHalf
+sampler VSM_ShadowTex;
 float4x4 VSM_LightMatrix;
 float4x4 VSM_LightMatrixNormal;
 float VSM_InvNumCascades;
@@ -32,8 +32,7 @@ float VSM_ShadowIntensity(float3 wPos, float3 wNormal)
     uv += float2(0.5, 0.5 + cascade);
     uv.y *= VSM_InvNumCascades;
 
-    float shadowIntensity = 0;
-    float2 s = float2(tex2D(VSM_ShadowTex1, uv).r, tex2D(VSM_ShadowTex2, uv).r);
+    float2 s = tex2D(VSM_ShadowTex, uv).rg;
     //depth *= exp2(CASCADES - 1 - cascade);
 
 
